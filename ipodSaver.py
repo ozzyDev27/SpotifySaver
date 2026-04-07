@@ -1,9 +1,9 @@
-#!/usr/bin/env python3
-
 import io
+import json
 import os
 import shutil
 import subprocess
+import urllib.parse
 from urllib import request as rq
 
 import eyed3
@@ -130,6 +130,44 @@ def find_youtube_url(track, skip_url=None):
         return f"https://www.youtube.com/watch?v={entries[0]['id']}"
 
 
+def find_archive_url(track):
+    query = f"{track['artist_name']} {track['track_name']}"
+    search = "https://archive.org/advancedsearch.php?" + urllib.parse.urlencode([
+        ("q", f"{query} AND mediatype:audio"),
+        ("fl[]", "identifier"),
+        ("output", "json"),
+        ("rows", "3"),
+    ])
+    try:
+        with rq.urlopen(search, timeout=8) as resp:
+            items = json.loads(resp.read()).get("response", {}).get("docs", [])
+        name_lower = track["track_name"].lower()
+        spotify_secs = track.get("duration_ms", 0) / 1000
+        for item in items:
+            identifier = item.get("identifier", "")
+            with rq.urlopen(f"https://archive.org/metadata/{identifier}/files", timeout=8) as resp:
+                files = json.loads(resp.read()).get("result", [])
+            for f in files:
+                fname = f.get("name", "")
+                if name_lower in fname.lower() and fname.lower().endswith((".mp3", ".flac", ".ogg")):
+                    length = float(f.get("length") or 0)
+                    if spotify_secs and length and abs(length - spotify_secs) > 5:
+                        continue
+                    return f"https://archive.org/download/{identifier}/{fname}"
+    except Exception:
+        pass
+    return None
+
+
+def find_url(track, skip_url=None):
+    if not skip_url:
+        url = find_archive_url(track)
+        if url:
+            print("  (archive.org)", end=" ", flush=True)
+            return url
+    return find_youtube_url(track, skip_url=skip_url)
+
+
 def download_tracks(tracks, path, label, results):
     existing = os.listdir(path)
     total = len(tracks)
@@ -137,17 +175,17 @@ def download_tracks(tracks, path, label, results):
     print(f"\n{label}  ({len(pending)} to download)")
     with YoutubeDL(ydl_opts(path)) as ydl:
         for list_idx, track in pending:
-            url = find_youtube_url(track)
+            print(f"  {track['track_name']}", end="", flush=True)
+            url = find_url(track)
             if not url:
-                print(f"  skip  {track['track_name']}  (no result)")
+                print(f"\n  skip  {track['track_name']}  (no result)")
                 results.append({"track": track["track_name"], "album": track["album_name"], "status": "missing", "diff": None, "_track": track, "_path": path, "_url": None, "_index": list_idx, "_total": total})
                 continue
             info = ydl.extract_info(url, download=False)
             if not info:
-                print(f"  skip  {track['track_name']}  (couldn't extract)")
+                print(f"\n  skip  {track['track_name']}  (couldn't extract)")
                 results.append({"track": track["track_name"], "album": track["album_name"], "status": "missing", "diff": None, "_track": track, "_path": path, "_url": url, "_index": list_idx, "_total": total})
                 continue
-            print(f"  {track['track_name']}", end="", flush=True)
             ydl.download([url])
             tag_file(info["id"], track, path)
             print("  ✓")
@@ -268,7 +306,7 @@ def redo_tracks(candidates):
         existing_file = os.path.join(path, f"{track['file_name']}.mp3")
         if os.path.exists(existing_file):
             os.remove(existing_file)
-        url = find_youtube_url(track, skip_url=r.get("_url"))
+        url = find_url(track, skip_url=r.get("_url"))
         if not url:
             print(f"  still no result for {track['track_name']}")
             redo_results.append({**r, "status": "missing", "diff": None})

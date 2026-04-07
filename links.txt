@@ -1,13 +1,5 @@
-# Paste your Spotify album or playlist links below — one per line.
-# Lines starting with # are ignored. Blank lines are ignored.
-#
-# Supported formats:
-#   https://open.spotify.com/album/5wtE5aLX5r7jOosmPhJhhk
-#   https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M
-#   spotify:album:5wtE5aLX5r7jOosmPhJhhk
-#   spotify:playlist:37i9dQZF1DXcBWIGoYBM5M
-#
-# Albums save to:    <download_base_path>/<Artist>/<Album>/<Song>.mp3
-# Playlists save to: <download_base_path>/Playlists/<Playlist Name>/<Song>.mp3
-
-https://open.spotify.com/album/5wtE5aLX5r7jOosmPhJhhk?si=693f90d17512403b
+https://open.spotify.com/album/4Uv86qWpGTxf7fU7lG5X6F?si=2c764e2e87d74917
+https://open.spotify.com/album/3CCnGldVQ90c26aFATC1PW?si=af70af7646f44f25
+https://open.spotify.com/album/5fMlysqhFE0itGn4KezMBW?si=4c61da45ba7c4590
+https://open.spotify.com/album/6PBZN8cbwkqm1ERj2BGXJ1?si=9294ad1e69e64820
+https://open.spotify.com/album/7gsWAHLeT0w7es6FofOXk1?si=fe8e6cdf1f7d4a14
