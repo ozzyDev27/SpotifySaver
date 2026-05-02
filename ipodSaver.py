@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import urllib.parse
@@ -25,7 +26,9 @@ sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
 
 
 def normalize(s):
-    return s.translate(str.maketrans('\\/:*?"<>|', "__       "))
+    s = s.translate(str.maketrans('\\/:*?"<>|', "__       "))
+    s = re.sub(r'[!@#$%^&+=\[\]{};\'`,~]', '', s)
+    return s.strip()
 
 
 def make_dir(rel_path):
@@ -34,10 +37,11 @@ def make_dir(rel_path):
     return full
 
 
-def ydl_opts(path):
+def ydl_opts(path, title=None):
+    filename = title if title else "%(id)s"
     return {
         "format": "bestaudio/best",
-        "outtmpl": f"{path}/%(id)s.%(ext)s",
+        "outtmpl": f"{path}/{filename}.%(ext)s",
         "ignoreerrors": True,
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
@@ -137,8 +141,10 @@ def find_archive_url(track):
         ("fl[]", "identifier"),
         ("output", "json"),
         ("rows", "3"),
+        ("columns", "1")
     ])
     try:
+
         with rq.urlopen(search, timeout=8) as resp:
             items = json.loads(resp.read()).get("response", {}).get("docs", [])
         name_lower = track["track_name"].lower()
@@ -346,6 +352,90 @@ def trim_bad_tracks(all_results):
     return True
 
 
+def get_youtube(url):
+    with YoutubeDL({"quiet": True, "extract_flat": "in_playlist", "skip_download": True}) as ydl:
+        info = ydl.extract_info(url, download=False)
+    if not info:
+        print(f"  couldn't fetch {url}")
+        return []
+
+    is_playlist = info.get("_type") == "playlist"
+    if is_playlist:
+        label = normalize(info.get("title") or "YouTube Playlist")
+        entries = [e for e in (info.get("entries") or []) if e]
+        thumb = info.get("thumbnails", [{}])[-1].get("url") if info.get("thumbnails") else None
+    else:
+        label = normalize(info.get("title") or info["id"])
+        entries = [info]
+        thumb = info.get("thumbnail")
+
+    total = len(entries)
+    path = make_dir(os.path.join("YouTube", label))
+    save_cover(thumb, path)
+    print(f"\n{label}  ({total} to download)")
+
+    existing = set(os.listdir(path))
+    results = []
+    for i, entry in enumerate(entries):
+        vid_id = entry.get("id") or ""
+        vid_url = entry.get("url") or f"https://www.youtube.com/watch?v={vid_id}"
+        title = normalize(entry.get("title") or vid_id)
+        if f"{title}.mp3" in existing:
+            continue
+        print(f"  {title}", end="", flush=True)
+
+        downloaded_file = []
+        def on_progress(d):
+            if d.get("status") == "finished":
+                downloaded_file.append(d.get("filename", ""))
+
+        opts = ydl_opts(path, title)
+        opts["progress_hooks"] = [on_progress]
+
+        with YoutubeDL(opts) as ydl:
+            full = ydl.extract_info(vid_url, download=False)
+            if not full:
+                print(f"\n  skip  {title}  (couldn't extract)")
+                results.append({"track": title, "album": label, "status": "missing", "diff": None,
+                                 "_track": None, "_path": path, "_url": vid_url, "_index": i, "_total": total})
+                continue
+            ydl.download([vid_url])
+
+        # find the mp3 — hook gives us the pre-conversion name, swap extension
+        mp3_path = None
+        if downloaded_file:
+            base = os.path.splitext(downloaded_file[0])[0]
+            candidate = base + ".mp3"
+            if os.path.exists(candidate):
+                mp3_path = candidate
+        if not mp3_path:
+            new = [f for f in os.listdir(path) if f.endswith(".mp3") and f not in existing]
+            if new:
+                mp3_path = os.path.join(path, new[0])
+        if not mp3_path:
+            print(f"\n  skip  {title}  (mp3 not found after download)")
+            continue
+
+        file_id = os.path.splitext(os.path.basename(mp3_path))[0]
+        track = {
+            "track_name": title,
+            "artist_name": normalize(full.get("uploader") or full.get("channel") or ""),
+            "album_name": label,
+            "album_date": str(full.get("upload_date") or "")[:4],
+            "album_art": full.get("thumbnail") or "",
+            "track_number": i + 1,
+            "total_tracks": total,
+            "duration_ms": (full.get("duration") or 0) * 1000,
+            "file_name": title,
+        }
+        tag_file(file_id, track, path)
+        existing.add(os.path.basename(mp3_path))
+        print("  ✓")
+        results.append({"track": title, "album": label, "status": "ok", "diff": None,
+                         "_track": track, "_path": path, "_url": vid_url, "_index": i, "_total": total})
+    return results
+
+
 def run():
     with open(LINKS_FILE) as f:
         links = [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
@@ -356,10 +446,12 @@ def run():
 
     all_results = []
     for link in links:
-        if "album" in link:
+        if "spotify" in link and "album" in link:
             all_results.extend(get_album(link))
-        elif "playlist" in link:
+        elif "spotify" in link and "playlist" in link:
             all_results.extend(get_playlist(link))
+        elif "youtube.com" in link or "youtu.be" in link:
+            all_results.extend(get_youtube(link))
         else:
             print(f"unknown link: {link}")
 
