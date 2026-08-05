@@ -50,7 +50,6 @@ def ydl_opts(path, title=None):
         }],
     }
 
-
 def save_cover(art_url, path):
     dest = os.path.join(path, "cover.png")
     if os.path.exists(dest) or not art_url:
@@ -360,17 +359,21 @@ def get_youtube(url):
         return []
 
     is_playlist = info.get("_type") == "playlist"
-    if is_playlist:
-        label = normalize(info.get("title") or "YouTube Playlist")
-        entries = [e for e in (info.get("entries") or []) if e]
-        thumb = info.get("thumbnails", [{}])[-1].get("url") if info.get("thumbnails") else None
-    else:
-        label = normalize(info.get("title") or info["id"])
-        entries = [info]
-        thumb = info.get("thumbnail")
+    # if is_playlist:
+    #     label = normalize(info.get("title") or "YouTube Playlist")
+    #     entries = [e for e in (info.get("entries") or []) if e]
+    #     thumb = info.get("thumbnails", [{}])[-1].get("url") if info.get("thumbnails") else None
+    # else:
+    #     label = normalize(info.get("title") or info["id"])
+    #     entries = [info]
+    #     thumb = info.get("thumbnail")
+    label = normalize(info.get("title") or info["id"])
+    entries = [info]
+    thumb = info.get("thumbnail")
+
 
     total = len(entries)
-    path = make_dir(os.path.join("YouTube", label))
+    path = make_dir("YouTube")
     save_cover(thumb, path)
     print(f"\n{label}  ({total} to download)")
 
