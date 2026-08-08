@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ipod uploader</title>
+</head>
+<body>
+<h1>ipod uploader</h1>
+<div id="gate">
+	<input type="password" id="gatePassword" placeholder="password">
+	<button id="gateBtn">enter</button>
+	<span id="gateMsg"></span>
+</div>
+<div id="main" hidden>
+	<button id="tabDownloadBtn">download</button>
+	<button id="tabRetagBtn">retag</button>
+	<hr>
+	<div id="tabDownload">
+		<div id="spotifyAuth">
+			<button id="spotifyLoginBtn">log in to spotify</button>
+			<span id="spotifyUser"></span>
+		</div>
+		<div id="library" hidden>
+			<h3>playlists</h3>
+			<ul id="playlistList"></ul>
+			<h3>liked albums</h3>
+			<ul id="albumList"></ul>
+		</div>
+		<div id="collection" hidden>
+			<hr>
+			<h2 id="collectionName"></h2>
+			<button id="downloadAllBtn">download all</button>
+			<span id="overallProgress"></span>
+			<table border="1" cellpadding="4">
+				<thead>
+					<tr><th>#</th><th>track</th><th>source</th><th>status</th><th>progress</th><th>actions</th></tr>
+				</thead>
+				<tbody id="trackRows"></tbody>
+			</table>
+		</div>
+		<div id="cutter" hidden>
+			<hr>
+			<h3 id="cutterTitle"></h3>
+			<canvas id="wave" width="1200" height="180"></canvas>
+			<br>
+			<button id="playBtn">play</button>
+			<button id="zoomInBtn">zoom in</button>
+			<button id="zoomOutBtn">zoom out</button>
+			<button id="zoomFitBtn">fit</button>
+			<span id="cursorTime"></span>
+			<br>
+			start <input type="number" id="cutStart" step="0.01" min="0" size="8">
+			end <input type="number" id="cutEnd" step="0.01" min="0" size="8">
+			fade in <input type="number" id="fadeIn" step="0.1" min="0" value="0" size="5">
+			fade out <input type="number" id="fadeOut" step="0.1" min="0" value="0" size="5">
+			<br>
+			<button id="setStartBtn">set start to cursor</button>
+			<button id="setEndBtn">set end to cursor</button>
+			<button id="applyCutBtn">apply cut</button>
+			<button id="restoreBtn">restore original (undo trim/cuts)</button>
+			<button id="closeCutterBtn">close</button>
+			<span id="cutMsg"></span>
+		</div>
+	</div>
+	<div id="tabRetag" hidden>
+		<p><input type="file" id="retagFiles" accept=".mp3" multiple></p>
+		<table border="1" cellpadding="4">
+			<tbody id="retagRows"></tbody>
+		</table>
+		<p>
+			<label><input type="checkbox" id="incArtist" checked> artist</label>
+			<input type="text" id="fArtist">
+		</p>
+		<p>
+			<label><input type="checkbox" id="incAlbumArtist" checked> album artist</label>
+			<input type="text" id="fAlbumArtist" placeholder="same as artist if blank">
+		</p>
+		<p>
+			<label><input type="checkbox" id="incAlbum" checked> album</label>
+			<input type="text" id="fAlbum">
+		</p>
+		<p>
+			<label><input type="checkbox" id="incYear"> year</label>
+			<input type="number" id="fYear" size="6">
+		</p>
+		<p>
+			<label><input type="checkbox" id="incGenre"> genre</label>
+			<input type="text" id="fGenre">
+		</p>
+		<p>
+			<label><input type="checkbox" id="incNumber" checked> track numbers</label>
+		</p>
+		<p>
+			<label><input type="checkbox" id="incCover" checked> cover art</label>
+			file <input type="file" id="fCoverFile" accept="image/*">
+			or url <input type="text" id="fCoverUrl" size="40">
+		</p>
+		<p>
+			<button id="retagGoBtn">retag &amp; download zip</button>
+			<span id="retagMsg"></span>
+		</p>
+	</div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

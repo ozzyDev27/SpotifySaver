@@ -1,0 +1,7 @@
+flask
+requests
+eyed3
+mutagen
+Pillow
+yt-dlp
+python-dotenv
