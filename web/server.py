@@ -31,7 +31,8 @@ MAX_AGE = 3600
 
 os.makedirs(WORK, exist_ok=True)
 
-app = Flask(__name__, static_folder="static", static_url_path="")
+STATIC = os.path.join(os.path.dirname(__file__), "..")
+app = Flask(__name__, static_folder=None)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-" + CLIENT_ID if CLIENT_ID else "dev")
 app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024
 
@@ -638,8 +639,13 @@ def api_retag():
 
 @app.get("/")
 def root():
-	return app.send_static_file("index.html")
+	return send_file(os.path.join(STATIC, "index.html"))
+
+
+@app.get("/app.js")
+def app_js():
+	return send_file(os.path.join(STATIC, "app.js"))
 
 
 if __name__ == "__main__":
-	app.run(host="127.0.0.1", port=5510, threaded=True)
+	app.run(host="127.0.0.1", port=int(os.environ.get("PORT", 5510)), threaded=True)
