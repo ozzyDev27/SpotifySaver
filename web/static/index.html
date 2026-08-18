@@ -20,14 +20,17 @@
 			<button id="spotifyLoginBtn">log in to spotify</button>
 			<span id="spotifyUser"></span>
 		</div>
+		<table width="100%"><tr>
+		<td width="30%" valign="top">
 		<div id="library" hidden>
 			<h3>playlists</h3>
 			<ul id="playlistList"></ul>
 			<h3>liked albums</h3>
 			<ul id="albumList"></ul>
 		</div>
+		</td>
+		<td valign="top">
 		<div id="collection" hidden>
-			<hr>
 			<h2 id="collectionName"></h2>
 			<button id="downloadAllBtn">download all</button>
 			<span id="overallProgress"></span>
@@ -39,7 +42,6 @@
 			</table>
 		</div>
 		<div id="cutter" hidden>
-			<hr>
 			<h3 id="cutterTitle"></h3>
 			<canvas id="wave" width="1200" height="180"></canvas>
 			<br>
@@ -61,6 +63,8 @@
 			<button id="closeCutterBtn">close</button>
 			<span id="cutMsg"></span>
 		</div>
+		</td>
+		</tr></table>
 	</div>
 	<div id="tabRetag" hidden>
 		<p><input type="file" id="retagFiles" accept=".mp3" multiple></p>

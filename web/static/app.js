@@ -92,7 +92,16 @@ var findActive = 0;
 var prepQueue = [];
 var prepActive = 0;
 
+function discardAll() {
+	var tokens = rows.filter(function(r) { return r.token; }).map(function(r) { return r.token; });
+	if (tokens.length) api("/api/discard", {json: {tokens: tokens}}).catch(function() {});
+}
+
+var collectionName = "tracks";
+
 function openCollection(item) {
+	discardAll();
+	collectionName = item.name;
 	$("collection").hidden = false;
 	$("cutter").hidden = true;
 	$("collectionName").textContent = item.name;
@@ -103,6 +112,10 @@ function openCollection(item) {
 	prepQueue = [];
 	api("/api/tracks?type=" + item.type + "&id=" + item.id).then(function(d) {
 		d.tracks.forEach(function(track, i) { addRow(track, i); });
+		if (!rows.length) {
+			$("overallProgress").textContent = "no tracks found";
+			return;
+		}
 		updateOverall();
 		rows.forEach(function(row) { queueFind(row); });
 	}).catch(function(e) {
@@ -225,6 +238,7 @@ function renderActions(row) {
 	var retry = document.createElement("button");
 	retry.textContent = "retry";
 	retry.onclick = function() {
+		if (row.token) api("/api/discard", {json: {tokens: [row.token]}}).catch(function() {});
 		row.token = null;
 		row.progressCell.textContent = "";
 		queueFind(row);
@@ -258,12 +272,12 @@ $("downloadAllBtn").onclick = function() {
 	fetch("/api/zip", {
 		method: "POST",
 		headers: {"Content-Type": "application/json"},
-		body: JSON.stringify({tokens: tokens})
+		body: JSON.stringify({tokens: tokens, name: collectionName})
 	}).then(function(r) {
 		if (!r.ok) throw new Error("zip failed");
 		return r.blob();
 	}).then(function(blob) {
-		saveBlob(blob, "tracks.zip");
+		saveBlob(blob, collectionName + ".zip");
 		rows.forEach(function(r) {
 			if (r.token) {
 				r.token = null;
@@ -673,7 +687,7 @@ $("retagGoBtn").onclick = function() {
 	xhr.onload = function() {
 		if (xhr.status === 200) {
 			$("retagMsg").textContent = "done";
-			saveBlob(xhr.response, "retagged.zip");
+			saveBlob(xhr.response, ($("fAlbum").value || "retagged") + ".zip");
 		} else {
 			$("retagMsg").textContent = "failed (" + xhr.status + ")";
 		}

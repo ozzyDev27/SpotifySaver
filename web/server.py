@@ -165,6 +165,25 @@ def sp_paged(path, key=None, **params):
 			return items
 
 
+def playlist_items(sid):
+	tok = sp_token()
+	if not tok:
+		raise PermissionError("not logged in to spotify")
+	page = sp_get("playlists/" + sid).get("items")
+	if isinstance(page, list):
+		return page
+	items = []
+	while isinstance(page, dict):
+		items.extend(page.get("items") or [])
+		nxt = page.get("next")
+		if not nxt:
+			break
+		r = requests.get(nxt, headers={"Authorization": "Bearer " + tok}, timeout=15)
+		r.raise_for_status()
+		page = r.json()
+	return items
+
+
 @app.get("/api/spotify/status")
 def spotify_status():
 	if not session.get("sp_token"):
@@ -176,22 +195,6 @@ def spotify_status():
 		return jsonify({"logged_in": False})
 
 
-@app.get("/api/debug/<pid>")
-def api_debug(pid):
-	out = {}
-	for label, path, params in [
-		("detail", "playlists/" + pid, {}),
-		("detail_fields", "playlists/" + pid, {"fields": "tracks.total"}),
-		("tracks", "playlists/" + pid + "/tracks", {"limit": 1}),
-	]:
-		try:
-			d = sp_get(path, **params)
-			out[label] = {"keys": sorted(d.keys()), "total": d.get("total"), "tracks": d.get("tracks")}
-		except Exception as e:
-			out[label] = str(e)
-	return jsonify(out)
-
-
 @app.get("/api/library")
 def library():
 	playlists = []
@@ -199,12 +202,6 @@ def library():
 		if not p:
 			continue
 		count = (p.get("tracks") or {}).get("total")
-		if count is None:
-			try:
-				count = sp_get(f"playlists/{p['id']}", fields="tracks.total")["tracks"]["total"]
-			except Exception as e:
-				print(f"count fail {p['name']}: {e}", flush=True)
-				count = None
 		playlists.append({"id": p["id"], "name": p["name"], "count": count, "type": "playlist"})
 	albums = [{"id": a["album"]["id"], "name": a["album"]["name"],
 		"artist": a["album"]["artists"][0]["name"], "count": a["album"]["total_tracks"], "type": "album"}
@@ -232,17 +229,20 @@ def tracks():
 				"duration_ms": item.get("duration_ms", 0), "file_name": tn,
 			})
 	else:
-		for item in sp_paged("playlists/" + sid + "/tracks", additional_types="track"):
-			t = item.get("track")
-			if not t or t.get("type") != "track":
+		for item in playlist_items(sid):
+			if not item:
 				continue
+			t = item.get("item") or item.get("track") or item
+			if not t.get("name") or t.get("type") not in (None, "track"):
+				continue
+			album = t.get("album") or {}
 			tn = normalize(t["name"])
 			out.append({
 				"track_name": tn, "artist_name": normalize(t["artists"][0]["name"]),
-				"album_name": normalize(t["album"]["name"]),
-				"album_date": t["album"]["release_date"],
-				"album_art": t["album"]["images"][0]["url"] if t["album"]["images"] else "",
-				"track_number": t["track_number"], "total_tracks": None,
+				"album_name": normalize(album.get("name", "")),
+				"album_date": album.get("release_date", ""),
+				"album_art": album["images"][0]["url"] if album.get("images") else "",
+				"track_number": t.get("track_number", 0), "total_tracks": None,
 				"duration_ms": t.get("duration_ms", 0), "file_name": tn,
 			})
 		for i, t in enumerate(out):
@@ -517,6 +517,15 @@ def cleanup_response(resp, paths):
 	return resp
 
 
+@app.post("/api/discard")
+def api_discard():
+	for token in (request.json or {}).get("tokens", []):
+		wdir = wdir_of(token)
+		if wdir:
+			shutil.rmtree(wdir, ignore_errors=True)
+	return jsonify({"ok": True})
+
+
 @app.get("/api/download/<token>")
 def api_download(token):
 	wdir = wdir_of(token)
@@ -535,7 +544,9 @@ def api_download(token):
 
 @app.post("/api/zip")
 def api_zip():
-	tokens = (request.json or {}).get("tokens", [])
+	body = request.json or {}
+	tokens = body.get("tokens", [])
+	zname = normalize(body.get("name") or "tracks") + ".zip"
 	try:
 		ensure_space()
 	except RuntimeError as e:
@@ -558,7 +569,7 @@ def api_zip():
 			used.add(name)
 			z.write(os.path.join(wdir, "cur.mp3"), name)
 			dirs.append(wdir)
-	resp = send_file(zpath, mimetype="application/zip", as_attachment=True, download_name="tracks.zip")
+	resp = send_file(zpath, mimetype="application/zip", as_attachment=True, download_name=zname)
 	return cleanup_response(resp, dirs + [zpath])
 
 
@@ -620,7 +631,8 @@ def api_retag():
 			num = str(i + 1).zfill(len(total_tracks))
 			z.write(fp, f"{num} {normalize(title)}.mp3")
 			os.remove(fp)
-	resp = send_file(zpath, mimetype="application/zip", as_attachment=True, download_name="retagged.zip")
+	zname = normalize(fields.get("album") or "retagged") + ".zip"
+	resp = send_file(zpath, mimetype="application/zip", as_attachment=True, download_name=zname)
 	return cleanup_response(resp, [wdir, zpath])
 
 
