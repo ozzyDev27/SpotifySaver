@@ -97,6 +97,13 @@ function discardAll() {
 	if (tokens.length) api("/api/discard", {json: {tokens: tokens}}).catch(function() {});
 }
 
+window.addEventListener("pagehide", function() {
+	var tokens = rows.filter(function(r) { return r.token; }).map(function(r) { return r.token; });
+	if (tokens.length) {
+		navigator.sendBeacon("/api/discard", new Blob([JSON.stringify({tokens: tokens})], {type: "application/json"}));
+	}
+});
+
 var collectionName = "tracks";
 
 function openCollection(item) {
@@ -198,13 +205,7 @@ function prepare(row) {
 	row.statusCell.textContent = "downloading";
 	var pid = "";
 	for (var i = 0; i < 32; i++) pid += "0123456789abcdef"[Math.floor(Math.random() * 16)];
-	var poll = setInterval(function() {
-		api("/api/progress/" + pid).then(function(p) {
-			row.progressCell.textContent = p.pct + "% " + p.stage;
-		}).catch(function() {});
-	}, 1000);
-	api("/api/prepare", {json: {track: row.track, url: row.url, pid: pid}}).then(function(d) {
-		clearInterval(poll);
+	function finish(d) {
 		row.token = d.token;
 		row.diff = d.diff;
 		row.progressCell.textContent = "100%";
@@ -222,14 +223,44 @@ function prepare(row) {
 		updateOverall();
 		prepActive--;
 		pumpPrepare();
-	}).catch(function(e) {
-		clearInterval(poll);
+	}
+	function fail(msg) {
 		row.status = "missing";
-		row.statusCell.textContent = "failed: " + e.message;
+		row.statusCell.textContent = "failed: " + msg;
 		renderActions(row);
 		updateOverall();
 		prepActive--;
 		pumpPrepare();
+	}
+	var stalls = 0;
+	var poll = setInterval(function() {
+		api("/api/progress/" + pid).then(function(p) {
+			if (p.stage === "done") {
+				clearInterval(poll);
+				finish(p);
+				return;
+			}
+			if (p.stage === "failed") {
+				clearInterval(poll);
+				fail(p.error || "download failed");
+				return;
+			}
+			if (p.stage === "queued") {
+				stalls++;
+				if (stalls > 300) {
+					clearInterval(poll);
+					fail("timed out");
+					return;
+				}
+			} else {
+				stalls = 0;
+			}
+			row.progressCell.textContent = p.pct + "% " + p.stage;
+		}).catch(function() {});
+	}, 1000);
+	api("/api/prepare", {json: {track: row.track, url: row.url, pid: pid, bitrate: $("bitrate").value}}).catch(function(e) {
+		clearInterval(poll);
+		fail(e.message);
 	});
 }
 
@@ -252,7 +283,11 @@ function renderActions(row) {
 		var dl = document.createElement("button");
 		dl.textContent = "download";
 		dl.onclick = function() {
-			location.href = "/api/download/" + row.token + "?keep=1";
+			location.href = "/api/download/" + row.token;
+			row.token = null;
+			row.statusCell.textContent = "downloaded";
+			row.actionCell.innerHTML = "";
+			updateOverall();
 		};
 		row.actionCell.appendChild(dl);
 	}
@@ -269,15 +304,8 @@ function updateOverall() {
 $("downloadAllBtn").onclick = function() {
 	var tokens = rows.filter(function(r) { return r.token; }).map(function(r) { return r.token; });
 	if (!tokens.length) return;
-	fetch("/api/zip", {
-		method: "POST",
-		headers: {"Content-Type": "application/json"},
-		body: JSON.stringify({tokens: tokens, name: collectionName})
-	}).then(function(r) {
-		if (!r.ok) throw new Error("zip failed");
-		return r.blob();
-	}).then(function(blob) {
-		saveBlob(blob, collectionName + ".zip");
+	api("/api/zip", {json: {tokens: tokens, name: collectionName}}).then(function(d) {
+		location.href = "/api/zipfile/" + d.zid;
 		rows.forEach(function(r) {
 			if (r.token) {
 				r.token = null;

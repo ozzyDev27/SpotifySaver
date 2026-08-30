@@ -27,7 +27,7 @@ CLIENT_SECRET = os.environ.get("CLIENT_SECRET")
 GATE_PASSWORD = "yippee"
 WORK = os.path.join(os.path.dirname(__file__), "work")
 MIN_FREE = 700 * 1024 * 1024
-MAX_AGE = 3600
+MAX_AGE = 1800
 
 os.makedirs(WORK, exist_ok=True)
 
@@ -50,7 +50,7 @@ def sweep():
 					shutil.rmtree(p, ignore_errors=True)
 		except OSError:
 			pass
-		time.sleep(600)
+		time.sleep(300)
 
 
 threading.Thread(target=sweep, daemon=True).start()
@@ -73,6 +73,9 @@ def normalize(s):
 
 @app.before_request
 def gate():
+	host = request.host.split(":")[0]
+	if request.headers.get("X-Forwarded-Proto") == "http" and host not in ("127.0.0.1", "localhost"):
+		return redirect("https://" + request.host + request.full_path.rstrip("?"), 301)
 	path = request.path
 	if path.startswith("/api") and path != "/api/gate" and not session.get("ok"):
 		return jsonify({"error": "locked"}), 401
@@ -287,7 +290,7 @@ def find_youtube_url(track, exclude):
 	for u in exclude:
 		if "v=" in u:
 			skip_ids.add(u.split("v=")[-1])
-	with YoutubeDL({"quiet": True, "skip_download": True, "extract_flat": True}) as ydl:
+	with YoutubeDL({"quiet": True, "skip_download": True, "extract_flat": True, "remote_components": ["ejs:github"]}) as ydl:
 		result = ydl.extract_info(f"ytsearch5:{query}", download=False)
 		if not result or not result.get("entries"):
 			return None
@@ -325,7 +328,10 @@ def set_progress(token, pct, stage):
 @app.get("/api/progress/<token>")
 def api_progress(token):
 	with PROG_LOCK:
-		return jsonify(PROG.get(token, {"pct": 0, "stage": "queued"}))
+		p = PROG.get(token, {"pct": 0, "stage": "queued"})
+		if p.get("stage") in ("done", "failed"):
+			PROG.pop(token, None)
+		return jsonify(p)
 
 
 def tag_mp3(path, track):
@@ -353,7 +359,7 @@ def tag_mp3(path, track):
 	audiofile.tag.save(version=eyed3.id3.ID3_V2_3)
 
 
-def trim_silence(file_path, trim_start, trim_end):
+def trim_silence(file_path, trim_start, trim_end, bitrate="128"):
 	if not trim_start and not trim_end:
 		return
 	filters = []
@@ -366,8 +372,8 @@ def trim_silence(file_path, trim_start, trim_end):
 		subprocess.run(
 			["ffmpeg", "-i", file_path, "-af", ",".join(filters),
 			 "-map_metadata", "0", "-id3v2_version", "3",
-			 "-c:a", "libmp3lame", "-b:a", "320k", tmp, "-y"],
-			check=True, capture_output=True)
+			 "-c:a", "libmp3lame", "-b:a", bitrate + "k", tmp, "-y"],
+			check=True, capture_output=True, timeout=300)
 		os.replace(tmp, file_path)
 	except Exception:
 		if os.path.exists(tmp):
@@ -386,6 +392,9 @@ def api_prepare():
 	data = request.json
 	track = data["track"]
 	url = data["url"]
+	bitrate = str(data.get("bitrate", 128))
+	if bitrate not in ("96", "128", "192", "256", "320"):
+		bitrate = "128"
 	try:
 		ensure_space()
 	except RuntimeError as e:
@@ -397,7 +406,11 @@ def api_prepare():
 	wdir = os.path.join(WORK, token)
 	os.makedirs(wdir)
 	set_progress(pid, 0, "downloading")
+	threading.Thread(target=run_prepare, args=(track, url, token, pid, wdir, bitrate), daemon=True).start()
+	return jsonify({"pid": pid})
 
+
+def run_prepare(track, url, token, pid, wdir, bitrate):
 	def hook(d):
 		if d.get("status") == "downloading":
 			total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
@@ -406,25 +419,36 @@ def api_prepare():
 		elif d.get("status") == "finished":
 			set_progress(pid, 90, "converting")
 
+	def pphook(d):
+		if d.get("status") == "finished":
+			set_progress(pid, 91, "converted")
+
 	opts = {
 		"format": "bestaudio/best",
 		"outtmpl": f"{wdir}/raw.%(ext)s",
 		"ignoreerrors": True,
 		"progress_hooks": [hook],
+		"postprocessor_hooks": [pphook],
 		"quiet": True,
+		"socket_timeout": 30,
+		"remote_components": ["ejs:github"],
 		"postprocessors": [{
 			"key": "FFmpegExtractAudio",
 			"preferredcodec": "mp3",
-			"preferredquality": "320",
+			"preferredquality": bitrate,
 		}],
 	}
-	with YoutubeDL(opts) as ydl:
-		info = ydl.extract_info(url, download=True)
+	try:
+		with YoutubeDL(opts) as ydl:
+			info = ydl.extract_info(url, download=True)
+	except Exception:
+		info = None
 	mp3 = os.path.join(wdir, "raw.mp3")
 	if not info or not os.path.exists(mp3):
 		shutil.rmtree(wdir, ignore_errors=True)
-		set_progress(pid, 0, "failed")
-		return jsonify({"error": "download failed"}), 502
+		with PROG_LOCK:
+			PROG[pid] = {"pct": 0, "stage": "failed", "error": "download failed"}
+		return
 	set_progress(pid, 92, "tagging")
 	tag_mp3(mp3, track)
 	cur = os.path.join(wdir, "cur.mp3")
@@ -433,14 +457,14 @@ def api_prepare():
 	set_progress(pid, 95, "trimming")
 	idx = track["track_number"]
 	total = track["total_tracks"] or 0
-	trim_silence(cur, idx != 1, idx != total)
+	trim_silence(cur, idx != 1, idx != total, bitrate)
+	track["bitrate"] = bitrate
 	with open(os.path.join(wdir, "meta.json"), "w") as f:
 		json.dump(track, f)
 	dur = mp3_duration(cur)
-	with PROG_LOCK:
-		PROG.pop(pid, None)
 	diff = abs(dur - track.get("duration_ms", 0) / 1000)
-	return jsonify({"token": token, "duration": dur, "diff": diff})
+	with PROG_LOCK:
+		PROG[pid] = {"pct": 100, "stage": "done", "token": token, "duration": dur, "diff": diff}
 
 
 def wdir_of(token):
@@ -489,12 +513,14 @@ def api_cut(token):
 	if fadeout > 0:
 		filters.append(f"afade=t=out:st={max(0, length - fadeout)}:d={fadeout}")
 	tmp = cur + ".tmp.mp3"
+	with open(os.path.join(wdir, "meta.json")) as f:
+		bitrate = json.load(f).get("bitrate", "128")
 	try:
 		subprocess.run(
 			["ffmpeg", "-i", cur, "-af", ",".join(filters),
 			 "-map_metadata", "0", "-id3v2_version", "3",
-			 "-c:a", "libmp3lame", "-b:a", "320k", tmp, "-y"],
-			check=True, capture_output=True)
+			 "-c:a", "libmp3lame", "-b:a", bitrate + "k", tmp, "-y"],
+			check=True, capture_output=True, timeout=300)
 		os.replace(tmp, cur)
 	except subprocess.CalledProcessError as e:
 		if os.path.exists(tmp):
@@ -535,24 +561,22 @@ def api_download(token):
 	with open(os.path.join(wdir, "meta.json")) as f:
 		track = json.load(f)
 	name = normalize(track["file_name"]) + ".mp3"
-	keep = request.args.get("keep") == "1"
 	resp = send_file(os.path.join(wdir, "cur.mp3"), mimetype="audio/mpeg",
 		as_attachment=True, download_name=name)
-	if not keep:
-		resp = cleanup_response(resp, [wdir])
-	return resp
+	return cleanup_response(resp, [wdir])
 
 
 @app.post("/api/zip")
 def api_zip():
 	body = request.json or {}
 	tokens = body.get("tokens", [])
-	zname = normalize(body.get("name") or "tracks") + ".zip"
+	zname = normalize(body.get("name") or "tracks")
 	try:
 		ensure_space()
 	except RuntimeError as e:
 		return jsonify({"error": str(e)}), 507
-	zpath = os.path.join(WORK, uuid.uuid4().hex + ".zip")
+	zid = uuid.uuid4().hex
+	zpath = os.path.join(WORK, zid + ".zip")
 	dirs = []
 	used = set()
 	with zipfile.ZipFile(zpath, "w", zipfile.ZIP_STORED) as z:
@@ -570,8 +594,27 @@ def api_zip():
 			used.add(name)
 			z.write(os.path.join(wdir, "cur.mp3"), name)
 			dirs.append(wdir)
-	resp = send_file(zpath, mimetype="application/zip", as_attachment=True, download_name=zname)
-	return cleanup_response(resp, dirs + [zpath])
+	for d in dirs:
+		shutil.rmtree(d, ignore_errors=True)
+	with open(os.path.join(WORK, zid + ".name"), "w") as f:
+		f.write(zname)
+	return jsonify({"zid": zid})
+
+
+@app.get("/api/zipfile/<zid>")
+def api_zipfile(zid):
+	if not re.fullmatch(r"[0-9a-f]{32}", zid):
+		return jsonify({"error": "bad id"}), 400
+	zpath = os.path.join(WORK, zid + ".zip")
+	npath = os.path.join(WORK, zid + ".name")
+	if not os.path.exists(zpath):
+		return jsonify({"error": "gone"}), 404
+	zname = "tracks"
+	if os.path.exists(npath):
+		with open(npath) as f:
+			zname = f.read().strip() or "tracks"
+	resp = send_file(zpath, mimetype="application/zip", as_attachment=True, download_name=zname + ".zip")
+	return cleanup_response(resp, [zpath, npath])
 
 
 @app.post("/api/retag")
